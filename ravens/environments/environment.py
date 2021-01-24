@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2020 The Ravens Authors.
+# Copyright 2021 The Ravens Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,6 +16,7 @@
 """Environment class."""
 
 import os
+import tempfile
 import time
 
 import gym
@@ -36,12 +37,20 @@ PLANE_URDF_PATH = 'plane/plane.urdf'
 class Environment(gym.Env):
   """OpenAI Gym-style environment class."""
 
-  def __init__(self, assets_root, disp=False, hz=240):
+  def __init__(self,
+               assets_root,
+               task=None,
+               disp=False,
+               shared_memory=False,
+               hz=240):
     """Creates OpenAI Gym-style environment with PyBullet.
 
     Args:
       assets_root: root directory of assets.
-      disp: show environment with PyBullet's built-in display viewer
+      task: the task to use. If None, the user must call set_task for the
+        environment to work properly.
+      disp: show environment with PyBullet's built-in display viewer.
+      shared_memory: run with shared memory.
       hz: PyBullet physics simulation step speed. Set to 480 for deformables.
 
     Raises:
@@ -54,27 +63,44 @@ class Environment(gym.Env):
 
     self.assets_root = assets_root
 
+    color_tuple = [
+        gym.spaces.Box(0, 255, config['image_size'] + (3,), dtype=np.uint8)
+        for config in self.agent_cams
+    ]
+    depth_tuple = [
+        gym.spaces.Box(0.0, 20.0, config['image_size'], dtype=np.float32)
+        for config in self.agent_cams
+    ]
     self.observation_space = gym.spaces.Dict({
-        'color':
-            gym.spaces.Tuple((gym.spaces.Box(
-                0, 255, config['image_size'] + (3,), dtype=np.uint8)
-                              for config in self.agent_cams)),
-        'depth':
-            gym.spaces.Tuple((gym.spaces.Box(
-                0.0, 20.0, config['image_size'], dtype=np.float32)
-                              for config in self.agent_cams)),
+        'color': gym.spaces.Tuple(color_tuple),
+        'depth': gym.spaces.Tuple(depth_tuple),
     })
+    # TODO(ayzaan): Delete below and uncomment vector box bounds.
+    position_bounds = gym.spaces.Box(
+        low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
+    # position_bounds = gym.spaces.Box(
+    #     low=np.array([0.25, -0.5, 0.], dtype=np.float32),
+    #     high=np.array([0.75, 0.5, 0.28], dtype=np.float32),
+    #     shape=(3,),
+    #     dtype=np.float32)
     self.action_space = gym.spaces.Dict({
         'pose0':
-            gym.spaces.Tuple((gym.spaces.Box(-1.0, 1.0, shape=(3,)),
-                              gym.spaces.Box(-1.0, 1.0, shape=(4,)))),
+            gym.spaces.Tuple(
+                (position_bounds,
+                 gym.spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32))),
         'pose1':
-            gym.spaces.Tuple((gym.spaces.Box(-1.0, 1.0, shape=(3,)),
-                              gym.spaces.Box(-1.0, 1.0, shape=(4,))))
+            gym.spaces.Tuple(
+                (position_bounds,
+                 gym.spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32)))
     })
 
     # Start PyBullet.
-    client = p.connect(p.SHARED_MEMORY if disp else p.DIRECT)
+    disp_option = p.DIRECT
+    if disp:
+      disp_option = p.GUI
+      if shared_memory:
+        disp_option = p.SHARED_MEMORY
+    client = p.connect(disp_option)
     file_io = p.loadPlugin('fileIOPlugin', physicsClientId=client)
     if file_io < 0:
       raise RuntimeError('pybullet: cannot load FileIO!')
@@ -88,6 +114,7 @@ class Environment(gym.Env):
     p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
     p.setPhysicsEngineParameter(enableFileCaching=0)
     p.setAdditionalSearchPath(assets_root)
+    p.setAdditionalSearchPath(tempfile.gettempdir())
     p.setTimeStep(1. / hz)
 
     # If using --disp, move default camera closer to the scene.
@@ -98,6 +125,9 @@ class Environment(gym.Env):
           cameraYaw=90,
           cameraPitch=-25,
           cameraTargetPosition=target)
+
+    if task:
+      self.set_task(task)
 
   @property
   def is_static(self):
@@ -128,6 +158,9 @@ class Environment(gym.Env):
 
   def reset(self):
     """Performs common reset functionality for all supported tasks."""
+    if not self.task:
+      raise ValueError('environment task must be set. Call set_task or pass '
+                       'the task arg in the environment constructor.')
     self.obj_ids = {'fixed': [], 'rigid': [], 'deformable': []}
     p.resetSimulation(p.RESET_USE_DEFORMABLE_WORLD)
     p.setGravity(0, 0, -9.8)
@@ -180,9 +213,15 @@ class Environment(gym.Env):
     if action is not None:
       timeout = self.task.primitive(self.movej, self.movep, self.ee, **action)
 
-      # Exit early if action times out.
+      # Exit early if action times out. We still return an observation
+      # so that we don't break the Gym API contract.
       if timeout:
-        return {}, 0, True, self.info
+        obs = {'color': (), 'depth': ()}
+        for config in self.agent_cams:
+          color, depth, _ = self.render_camera(config)
+          obs['color'] += (color,)
+          obs['depth'] += (depth,)
+        return obs, 0.0, True, self.info
 
     # Step simulator asynchronously until objects settle.
     while not self.is_static:
@@ -196,11 +235,11 @@ class Environment(gym.Env):
     info.update(self.info)
 
     # Get RGB-D camera image observations.
-    obs = {'color': [], 'depth': []}
+    obs = {'color': (), 'depth': ()}
     for config in self.agent_cams:
       color, depth, _ = self.render_camera(config)
-      obs['color'].append(color)
-      obs['depth'].append(depth)
+      obs['color'] += (color,)
+      obs['depth'] += (depth,)
 
     return obs, reward, done, info
 
@@ -284,6 +323,7 @@ class Environment(gym.Env):
     return info
 
   def set_task(self, task):
+    task.set_assets_root(self.assets_root)
     self.task = task
 
   #---------------------------------------------------------------------------

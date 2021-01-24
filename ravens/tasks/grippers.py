@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2020 The Ravens Authors.
+# Copyright 2021 The Ravens Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ class Spatula(Gripper):
     # Load spatula model.
     pose = ((0.487, 0.109, 0.438), p.getQuaternionFromEuler((np.pi, 0, 0)))
     base = pybullet_utils.load_urdf(
-        os.path.join(self.assets_root, SPATULA_BASE_URDF), pose[0], pose[1])
+        p, os.path.join(self.assets_root, SPATULA_BASE_URDF), pose[0], pose[1])
     p.createConstraint(
         parentBodyUniqueId=robot,
         parentLinkIndex=ee,

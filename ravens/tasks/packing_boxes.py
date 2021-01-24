@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2020 The Ravens Authors.
+# Copyright 2021 The Ravens Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ class PackingBoxes(Task):
     # Add container box.
     zone_size = self.get_random_size(0.05, 0.3, 0.05, 0.3, 0.05, 0.05)
     zone_pose = self.get_random_pose(env, zone_size)
-    container_template = 'assets/container/container-template.urdf'
+    container_template = 'container/container-template.urdf'
     half = np.float32(zone_size) / 2
     replace = {'DIM': zone_size, 'HALF': half}
     container_urdf = self.fill_template(container_template, replace)
@@ -95,7 +95,7 @@ class PackingBoxes(Task):
     object_points = {}
     object_ids = []
     bboxes = np.array(bboxes)
-    object_template = 'assets/box/box-template.urdf'
+    object_template = 'box/box-template.urdf'
     for bbox in bboxes:
       size = bbox[3:] - bbox[:3]
       position = size / 2. + bbox[:3]

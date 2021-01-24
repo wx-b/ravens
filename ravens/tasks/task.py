@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2020 The Ravens Authors.
+# Copyright 2021 The Ravens Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import collections
 import os
 import random
 import string
+import tempfile
 
 import cv2
 import numpy as np
@@ -52,7 +53,12 @@ class Task():
     self.progress = 0
     self._rewards = 0
 
+    self.assets_root = None
+
   def reset(self, env):  # pylint: disable=unused-argument
+    if not self.assets_root:
+      raise ValueError('assets_root must be set for task, '
+                       'call set_assets_root().')
     self.goals = []
     self.progress = 0  # Task progression metric in range [0, 1].
     self._rewards = 0  # Cumulative returned rewards.
@@ -319,16 +325,17 @@ class Task():
 
   def fill_template(self, template, replace):
     """Read a file and replace key strings."""
-    filepath = os.path.dirname(os.path.abspath(__file__))
-    template = os.path.join(filepath, '..', template)
-    with open(template, 'r') as file:
+    full_template_path = os.path.join(self.assets_root, template)
+    with open(full_template_path, 'r') as file:
       fdata = file.read()
     for field in replace:
       for i in range(len(replace[field])):
         fdata = fdata.replace(f'{field}{i}', str(replace[field][i]))
     alphabet = string.ascii_lowercase + string.digits
     rname = ''.join(random.choices(alphabet, k=16))
-    fname = f'{template}.{rname}'
+    tmpdir = tempfile.gettempdir()
+    template_filename = os.path.split(template)[-1]
+    fname = os.path.join(tmpdir, f'{template_filename}.{rname}')
     with open(fname, 'w') as file:
       file.write(fdata)
     return fname
@@ -355,3 +362,6 @@ class Task():
     shade = np.random.rand() + 0.5
     color = np.float32([shade * 156, shade * 117, shade * 95, 255]) / 255
     p.changeVisualShape(obj, -1, rgbaColor=color)
+
+  def set_assets_root(self, assets_root):
+    self.assets_root = assets_root
